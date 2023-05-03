@@ -12,6 +12,7 @@
 #include <sensor_msgs/msg/imu.h>
 #include <geometry_msgs/msg/twist.h>
 #include <geometry_msgs/msg/vector3.h>
+#include <sensor_msgs/msg/range.h> 
 
 #include "config.h"
 #include "motor.h"
@@ -19,6 +20,8 @@
 #include "pid.h"
 #include "odometry.h"
 #include "imu.h"
+#include "sensorTritex.h"
+
 #define ENCODER_USE_INTERRUPTS
 #define ENCODER_OPTIMIZE_INTERRUPTS
 #include "encoder.h"
@@ -34,10 +37,12 @@
 rcl_publisher_t odom_publisher;
 rcl_publisher_t imu_publisher;
 rcl_subscription_t twist_subscriber;
+rcl_publisher_t pubTritex;
 
 nav_msgs__msg__Odometry odom_msg;
 sensor_msgs__msg__Imu imu_msg;
 geometry_msgs__msg__Twist twist_msg;
+sensor_msgs__msg__Range range_msg;
 
 rclc_executor_t executor;
 rclc_support_t support;
@@ -100,6 +105,7 @@ void setup()
     
     Serial.begin(115200);
     set_microros_serial_transports(Serial);
+    setupSensorTritex();
 }
 
 void loop() {
@@ -169,6 +175,12 @@ bool createEntities()
         ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu),
         "imu/data"
     ));
+    //create tritex publisher
+     RCCHECK(rclc_publisher_init_default(
+    &pubTritex,
+    &node,
+    ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Range),
+    "range/raw"));
     // create twist command subscriber
     RCCHECK(rclc_subscription_init_default( 
         &twist_subscriber, 
@@ -209,6 +221,7 @@ bool destroyEntities()
 
     rcl_publisher_fini(&odom_publisher, &node);
     rcl_publisher_fini(&imu_publisher, &node);
+    rcl_publisher_fini(&pubTritex, &node);
     rcl_subscription_fini(&twist_subscriber, &node);
     rcl_node_fini(&node);
     rcl_timer_fini(&control_timer);
@@ -285,6 +298,7 @@ void publishData()
 {
     odom_msg = odometry.getData();
     imu_msg = imu.getData();
+    Tritex();
 
     struct timespec time_stamp = getTime();
 
@@ -294,8 +308,12 @@ void publishData()
     imu_msg.header.stamp.sec = time_stamp.tv_sec;
     imu_msg.header.stamp.nanosec = time_stamp.tv_nsec;
 
+    range_msg.header.stamp.nanosec = time_stamp.tv_nsec;
+    range_msg.header.stamp.sec = time_stamp.tv_sec;
+
     RCSOFTCHECK(rcl_publish(&imu_publisher, &imu_msg, NULL));
     RCSOFTCHECK(rcl_publish(&odom_publisher, &odom_msg, NULL));
+    RCSOFTCHECK(rcl_publish(&pubTritex, &range_msg, NULL));
 }
 
 void syncTime()
@@ -318,6 +336,19 @@ struct timespec getTime()
     tp.tv_nsec = (now % 1000) * 1000000;
 
     return tp;
+}
+
+void Tritex(){
+    lectura();
+
+    range_msg.header.frame_id.data = "frame_range";
+    range_msg.radiation_type = 0;
+    range_msg.field_of_view = 1;
+
+    range_msg.max_range = 1;
+    range_msg.min_range = 0.001;
+
+    range_msg.range = fsub;      
 }
 
 void rclErrorLoop() 
